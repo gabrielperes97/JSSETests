@@ -102,9 +102,10 @@ public class UdpClient {
                 }
             };
             new Thread(recv).start();
-
+            System.out.println("Tudo pronto");
             while (true)
             {
+
                 String msg = s.nextLine();
                 client.send(msg.getBytes(StandardCharsets.UTF_8));
                 System.out.println("Sending: "+ msg);

@@ -39,12 +39,36 @@ public class SSLManager {
         while(buffers.outAppData.hasRemaining())
         {
             SSLEngineResult res = sslEngine.wrap(buffers.outAppData, buffers.outNetData);
-
             switch (res.getStatus())
             {
                 case OK:
                     io.write(buffers.outNetData);
                     break;
+                case BUFFER_UNDERFLOW:
+                    break;
+                case BUFFER_OVERFLOW:
+                    int appSize = sslEngine.getSession().getApplicationBufferSize();
+                    if (appSize > buffers.outAppData.capacity())
+                    {
+                        ByteBuffer b = ByteBuffer.allocate(appSize);
+                        buffers.outAppData.flip();
+                        b.put(buffers.outAppData);
+                        buffers.outAppData = b;
+                    }
+
+
+                    int netSize = sslEngine.getSession().getPacketBufferSize();
+                    if(netSize > buffers.outNetData.capacity())
+                    {
+                        //enlarge the peer network packet buffer
+                        ByteBuffer b = ByteBuffer.allocate(netSize);
+                        buffers.outNetData.flip();
+                        b.put(buffers.outNetData);
+                        buffers.outNetData = b;
+                        //System.out.println("When Buffer Underflow");
+                    }
+                    break;
+
             }
         }
 
@@ -53,7 +77,7 @@ public class SSLManager {
     //Receive message through the SSL
     public byte[] receive() throws IOException {
         buffers.inAppData.clear();
-        buffers.inNetData.clear();
+        //buffers.inNetData.clear();
         SSLEngineResult res;
         int tam = io.read(buffers.inNetData);
         if (tam > 0)
@@ -85,15 +109,33 @@ public class SSLManager {
         SSLEngineResult.HandshakeStatus hs = sslEngine.getHandshakeStatus();
 
         while (hs != SSLEngineResult.HandshakeStatus.FINISHED && hs != SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING) {
-            System.out.println(hs.name());
             switch (hs) {
                 case NEED_UNWRAP:
-                    buffers.inNetData.clear();
-                case NEED_UNWRAP_AGAIN:
                     if (io.read(buffers.inNetData) < 0) {
                         UdpCommon.whenSocketClosed();
                     }
                     SSLEngineResult res = sslEngine.unwrap(buffers.inNetData, buffers.inAppData);
+                    buffers.inNetData.compact();
+                    hs = res.getHandshakeStatus();
+                    switch (res.getStatus()) {
+                        default:
+                            System.out.println(res.getStatus().name());
+                        case OK:
+                            //q q eu faço???
+                            break;
+                        case CLOSED:
+                            UdpCommon.whenSSLClosed();
+                            break;
+                        case BUFFER_OVERFLOW:
+                            UdpCommon.whenBufferOverflow(sslEngine, buffers.inAppData);
+                            break;
+                        case BUFFER_UNDERFLOW:
+                            UdpCommon.whenBufferUnderflow(sslEngine, buffers.inNetData);
+                            break;
+                    }
+                    break;
+                case NEED_UNWRAP_AGAIN:
+                    res = sslEngine.unwrap(buffers.inNetData, buffers.inAppData);
                     buffers.inNetData.compact();
                     hs = res.getHandshakeStatus();
 
@@ -114,10 +156,8 @@ public class SSLManager {
                     break;
                 case NEED_WRAP:
                     buffers.outNetData.clear();
-
                     res = sslEngine.wrap(buffers.outAppData, buffers.outNetData);
                     hs = res.getHandshakeStatus();
-
                     switch (res.getStatus()) {
                         case OK:
                             io.write(buffers.outNetData);
@@ -126,12 +166,32 @@ public class SSLManager {
                             UdpCommon.whenSSLClosed();
                             break;
                         case BUFFER_OVERFLOW:
-                            UdpCommon.whenBufferOverflow(sslEngine, buffers.outAppData);
+                            //UdpCommon.whenBufferOverflow(sslEngine, buffers.outAppData);
+
+                            int appSize = sslEngine.getSession().getApplicationBufferSize();
+                            if (appSize > buffers.outAppData.capacity())
+                            {
+                                ByteBuffer b = ByteBuffer.allocate(appSize);
+                                buffers.outAppData.flip();
+                                b.put(buffers.outAppData);
+                                buffers.outAppData = b;
+                            }
+
+
+                            int netSize = sslEngine.getSession().getPacketBufferSize();
+                            if(netSize > buffers.outNetData.capacity())
+                            {
+                                //enlarge the peer network packet buffer
+                                ByteBuffer b = ByteBuffer.allocate(netSize);
+                                buffers.outNetData.flip();
+                                b.put(buffers.outNetData);
+                                buffers.outNetData = b;
+                                //System.out.println("When Buffer Underflow");
+                            }
                             break;
                         case BUFFER_UNDERFLOW:
                             UdpCommon.whenBufferUnderflow(sslEngine, buffers.outNetData);
                             break;
-
                     }
                     break;
                 case NEED_TASK:

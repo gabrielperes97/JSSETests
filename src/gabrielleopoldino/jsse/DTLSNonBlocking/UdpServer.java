@@ -114,7 +114,6 @@ public class UdpServer implements Runnable {
                     //data.flip();
                     byte[] outData = Arrays.copyOf(data.array(), data.position());
                     UdpServer.this.send(address, outData);
-                    System.out.println(outData.length);
                     return outData.length;
                 }
 
@@ -124,7 +123,6 @@ public class UdpServer implements Runnable {
                         byte b[] = UdpServer.this.receive(address);
                         data.put(b);
                         data.flip();
-                        System.out.println(b.length);
                         return b.length;
 
                     } catch (InterruptedException e) {

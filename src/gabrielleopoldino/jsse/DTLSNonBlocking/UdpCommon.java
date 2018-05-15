@@ -27,7 +27,7 @@ public class UdpCommon {
             TrustManagerFactory trustFact = TrustManagerFactory.getInstance("SunX509");
             trustFact.init(keyStore);
 
-            context = SSLContext.getInstance("TLSv1.2");
+            context = SSLContext.getInstance("DTLSv1.2");
 
             context.init(keyFact.getKeyManagers(), trustFact.getTrustManagers(), null);
         } catch (FileNotFoundException e) {
@@ -75,10 +75,14 @@ public class UdpCommon {
 
     public static void whenBufferUnderflow(SSLEngine sslEngine, ByteBuffer netData)
     {
-
+        int netSize = sslEngine.getSession().getPacketBufferSize();
         if(sslEngine.getSession().getPacketBufferSize() > netData.capacity())
         {
             //enlarge the peer network packet buffer
+            ByteBuffer b = ByteBuffer.allocate(netSize);
+            netData.flip();
+            b.put(netData);
+            netData = b;
             System.out.println("When Buffer Underflow");
         }
         else
