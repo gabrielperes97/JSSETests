@@ -27,7 +27,7 @@ public class UdpCommon {
             TrustManagerFactory trustFact = TrustManagerFactory.getInstance("SunX509");
             trustFact.init(keyStore);
 
-            context = SSLContext.getInstance("DTLSv1.2");
+            context = SSLContext.getInstance("TLSv1.2");
 
             context.init(keyFact.getKeyManagers(), trustFact.getTrustManagers(), null);
         } catch (FileNotFoundException e) {

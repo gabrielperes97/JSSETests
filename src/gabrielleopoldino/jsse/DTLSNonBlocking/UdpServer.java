@@ -10,6 +10,7 @@ import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Queue;
@@ -92,11 +93,11 @@ public class UdpServer implements Runnable {
         private SSLSession sslSession;
         private SSLEngine sslEngine;
         private Buffers buffers;
+        private SSLManager sslManager;
 
 
 
-        public Client(SocketAddress address)
-        {
+        public Client(SocketAddress address) throws IOException {
             this.address = address;
             this.in = new LinkedBlockingQueue<>();
             this.sslEngine = UdpCommon.getContext().createSSLEngine();
@@ -106,17 +107,43 @@ public class UdpServer implements Runnable {
             this.sslSession = this.sslEngine.getSession();
 
             this.buffers = new Buffers(this.sslSession.getApplicationBufferSize(), this.sslSession.getPacketBufferSize());
+
+            SSLManager.IO io = new SSLManager.IO() {
+                @Override
+                public int write(ByteBuffer data) {
+                    //data.flip();
+                    byte[] outData = Arrays.copyOf(data.array(), data.position());
+                    UdpServer.this.send(address, outData);
+                    System.out.println(outData.length);
+                    return outData.length;
+                }
+
+                @Override
+                public int read(ByteBuffer data) {
+                    try {
+                        byte b[] = UdpServer.this.receive(address);
+                        data.put(b);
+                        data.flip();
+                        System.out.println(b.length);
+                        return b.length;
+
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+
+                    return -1;
+                }
+            };
+            this.sslManager = new SSLManager(io, sslEngine, buffers);
         }
 
 
         @Override
         public void run() {
             try {
-                doHandshake();
-            } catch (Exception e) {
+                this.sslManager.doHandshake();
+            } catch (IOException e) {
                 e.printStackTrace();
-                System.out.println("Erro durante handshake");
-                this.interrupt();
             }
             while (true)
             {
@@ -146,137 +173,14 @@ public class UdpServer implements Runnable {
             in.put(data);
         }
 
-        public void send(byte data[]) throws SSLException {
-            buffers.outAppData.clear();
-            buffers.outAppData.put(data);
-            buffers.outAppData.flip();
 
-            buffers.outNetData.clear();
 
-            while(buffers.outAppData.hasRemaining())
-            {
-                SSLEngineResult res = sslEngine.wrap(buffers.outAppData, buffers.outNetData);
-
-                switch (res.getStatus())
-                {
-                    case OK:
-                        byte[] outData = new byte[buffers.outNetData.remaining()];
-                        System.arraycopy(buffers.outNetData.array(), 0, outData,0, buffers.outNetData.remaining());
-                        UdpServer.this.send(this.address, outData);
-                        break;
-                }
-            }
+        public void send(byte data[]) throws IOException {
+            sslManager.send(data);
         }
 
-        public byte[] receive() throws IOException, InterruptedException {
-            buffers.inAppData.clear();
-            buffers.inNetData.clear();
-            SSLEngineResult res;
-
-            byte inData[] = UdpServer.this.receive(this.address);
-
-            if (inData.length > 0)
-            {
-                buffers.inNetData.put(inData);
-                buffers.inNetData.flip();
-                res = sslEngine.unwrap(buffers.inNetData, buffers.inAppData);
-                buffers.inNetData.compact();
-                switch (res.getStatus())
-                {
-                    case OK:
-                        byte[] msg = new byte[res.bytesProduced()];
-                        System.arraycopy(buffers.inAppData.array(), 0, msg, 0, res.bytesProduced());
-                        return msg;
-                    case CLOSED:
-                        UdpCommon.whenSSLClosed();
-                        break;
-                    case BUFFER_OVERFLOW:
-                        UdpCommon.whenBufferOverflow(sslEngine, buffers.inAppData);
-                        break;
-                    case BUFFER_UNDERFLOW:
-                        UdpCommon.whenBufferUnderflow(sslEngine, buffers.inNetData);
-                        break;
-                }
-            }
-            return new byte[0];
-        }
-
-        public void doHandshake() throws IOException, InterruptedException {
-            sslEngine.beginHandshake();
-            SSLEngineResult.HandshakeStatus hs = sslEngine.getHandshakeStatus();
-
-            while (hs != SSLEngineResult.HandshakeStatus.FINISHED && hs != SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING)
-            {
-                System.out.println(hs.name());
-                switch (hs)
-                {
-                    case NEED_UNWRAP:
-                        buffers.inNetData.clear();
-                    case NEED_UNWRAP_AGAIN:
-                        byte[] inData = UdpServer.this.receive(this.address);
-                        buffers.inNetData.put(inData);
-                        buffers.inNetData.flip();
-
-                        SSLEngineResult res = sslEngine.unwrap(buffers.inNetData, buffers.inAppData);
-                        buffers.inNetData.compact();
-                        hs = res.getHandshakeStatus();
-
-                        switch (res.getStatus())
-                        {
-                            case OK:
-                                //q q eu faço???
-                                break;
-                            case CLOSED:
-                                UdpCommon.whenSSLClosed();
-                                break;
-                            case BUFFER_OVERFLOW:
-                                UdpCommon.whenBufferOverflow(sslEngine, buffers.inAppData);
-                                break;
-                            case BUFFER_UNDERFLOW:
-                                UdpCommon.whenBufferUnderflow(sslEngine, buffers.inNetData);
-                                break;
-                        }
-                        break;
-                    case NEED_WRAP:
-                        buffers.outNetData.clear();
-
-                        res = sslEngine.wrap(buffers.outAppData, buffers.outNetData);
-                        hs = res.getHandshakeStatus();
-
-                        switch (res.getStatus())
-                        {
-                            case OK:
-                                //buffers.outNetData.flip();
-                                byte[] outData = new byte[buffers.outNetData.remaining()];
-                                System.arraycopy(buffers.outNetData.array(), 0, outData,0, buffers.outNetData.remaining());
-                                UdpServer.this.send(this.address, outData);
-                                break;
-                            case CLOSED:
-                                UdpCommon.whenSSLClosed();
-                                break;
-                            case BUFFER_OVERFLOW:
-                                UdpCommon.whenBufferOverflow(sslEngine, buffers.outAppData);
-                                break;
-                            case BUFFER_UNDERFLOW:
-                                UdpCommon.whenBufferUnderflow(sslEngine, buffers.outNetData);
-                                break;
-
-                        }
-                        break;
-                    case NEED_TASK:
-                        Runnable task;
-                        while ((task = sslEngine.getDelegatedTask()) != null)
-                        {
-                            //new Thread(task).start();
-                            task.run();
-                        }
-                        hs = sslEngine.getHandshakeStatus();
-                        break;
-                    default:
-                        hs = sslEngine.getHandshakeStatus();
-                        break;
-                }
-            }
+        public byte[] receive() throws IOException {
+            return sslManager.receive();
         }
     }
 
